@@ -83,7 +83,7 @@ defmodule PhoenixNow.Reloader do
     Macro.prewalk(rest, fn
       {:defmodule, _, [{:__aliases__, _, parts} | _]} = ast ->
         if Module.concat(parts) == module do
-          Code.eval_quoted(ast)
+          Code.eval_quoted(ast, [], file: path)
           :ok
         else
           ast
