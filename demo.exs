@@ -28,11 +28,5 @@ defmodule Demo.HomeView do
   end
 end
 
-defmodule Main do
-  def main do
-    {:ok, _} = PhoenixNow.start(view: Demo.HomeView)
-    Process.sleep(:infinity)
-  end
-end
-
-Main.main()
+{:ok, _} = PhoenixNow.start(view: Demo.HomeView)
+Process.sleep(:infinity)
