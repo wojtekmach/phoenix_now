@@ -15,7 +15,7 @@ defmodule Demo.HomeView do
     <button phx-click="inc">+</button>
     <button phx-click="dec">-</button>
 
-    <p>Now edit the file...</p>
+    <p>Now edit <code><%= __ENV__.file %></code> in your editor...</p>
     """
   end
 
