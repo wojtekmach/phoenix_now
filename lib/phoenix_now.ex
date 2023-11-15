@@ -1,24 +1,21 @@
-defmodule PhoenixNow.Application do
-  @moduledoc false
-
-  use Application
-
-  @impl true
-  def start(_type, _args) do
-    children = [
-      {Phoenix.PubSub, name: PhoenixNow.PubSub},
-      {PhoenixNow.Reloader, Demo.HomeView}
-    ]
-
-    opts = [strategy: :one_for_one, name: PhoenixNow.Supervisor]
-    Supervisor.start_link(children, opts)
-  end
-end
-
 defmodule PhoenixNow do
-  def start(view: view) do
-    Demo.HomeView = view
+  def child_spec(options) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [options]},
+      type: :supervisor
+    }
+  end
 
+  def start_link(options) do
+    options =
+      Keyword.validate!(options, [
+        :view,
+        port: 4000,
+        open_browser: true
+      ])
+
+    view = options[:view]
     path = view.__info__(:compile)[:source]
     basename = Path.basename(path)
 
@@ -26,9 +23,13 @@ defmodule PhoenixNow do
       Path.dirname(path)
     ])
 
+    if options[:open_browser] do
+      Application.put_env(:phoenix, :browser_open, true)
+    end
+
     Application.put_env(:phoenix_now, PhoenixNow.Endpoint,
       adapter: Bandit.PhoenixAdapter,
-      http: [ip: {127, 0, 0, 1}, port: 4000],
+      http: [ip: {127, 0, 0, 1}, port: options[:port]],
       server: true,
       live_view: [signing_salt: "aaaaaaaa"],
       secret_key_base: String.duplicate("a", 64),
@@ -44,9 +45,43 @@ defmodule PhoenixNow do
       ]
     )
 
-    Application.put_env(:phoenix, :browser_open, true)
+    :persistent_term.put(PhoenixNow, options)
 
-    Supervisor.start_child(PhoenixNow.Supervisor, PhoenixNow.Endpoint)
+    defmodule Router do
+      options = :persistent_term.get(PhoenixNow)
+
+      use Phoenix.Router
+      import Phoenix.LiveView.Router
+
+      pipeline :browser do
+        plug(:accepts, ["html"])
+        plug(:put_root_layout, html: {PhoenixNow.LayoutView, :root})
+      end
+
+      scope "/" do
+        pipe_through(:browser)
+
+        live_session :default, layout: {PhoenixNow.LayoutView, :live} do
+          live("/", Keyword.get(options, :view), :index, as: :home)
+        end
+      end
+    end
+
+    defmodule Endpoint do
+      use Phoenix.Endpoint, otp_app: :phoenix_now
+      socket("/live", Phoenix.LiveView.Socket)
+      socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
+      plug(Phoenix.LiveReloader)
+      plug(Router)
+    end
+
+    children = [
+      {Phoenix.PubSub, name: PhoenixNow.PubSub},
+      {PhoenixNow.Reloader, view},
+      Endpoint
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
   end
 end
 
@@ -75,12 +110,7 @@ defmodule PhoenixNow.Reloader do
       |> File.read!()
       |> Code.string_to_quoted()
 
-    {:__block__, _,
-     [
-       {{:., _, [{:__aliases__, _, [:Mix]}, :install]}, _, _} | rest
-     ]} = quoted
-
-    Macro.prewalk(rest, fn
+    Macro.prewalk(quoted, fn
       {:defmodule, _, [{:__aliases__, _, parts} | _]} = ast ->
         if Module.concat(parts) == module do
           Code.eval_quoted(ast, [], file: path)
@@ -93,32 +123,6 @@ defmodule PhoenixNow.Reloader do
         ast
     end)
   end
-end
-
-defmodule PhoenixNow.Router do
-  use Phoenix.Router
-  import Phoenix.LiveView.Router
-
-  pipeline :browser do
-    plug(:accepts, ["html"])
-    plug(:put_root_layout, html: {PhoenixNow.LayoutView, :root})
-  end
-
-  scope "/" do
-    pipe_through(:browser)
-
-    live_session :default, layout: {PhoenixNow.LayoutView, :live} do
-      live("/", Demo.HomeView, :index, as: :home)
-    end
-  end
-end
-
-defmodule PhoenixNow.Endpoint do
-  use Phoenix.Endpoint, otp_app: :phoenix_now
-  socket("/live", Phoenix.LiveView.Socket)
-  socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
-  plug(Phoenix.LiveReloader)
-  plug(PhoenixNow.Router)
 end
 
 defmodule PhoenixNow.LayoutView do
