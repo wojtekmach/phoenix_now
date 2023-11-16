@@ -10,13 +10,28 @@ defmodule PhoenixNow do
   def start_link(options) do
     options =
       Keyword.validate!(options, [
-        :view,
+        :live,
+        :routes,
         port: 4000,
         open_browser: true
       ])
 
-    view = options[:view]
-    path = view.__info__(:compile)[:source]
+    {path, routes} =
+      if live = options[:live] do
+        path = live.__info__(:compile)[:source]
+        {path, [{:live, "/", live, :index}]}
+      else
+        case options[:routes] do
+          [{_kind, _route, module, _action} | _] = routes ->
+            path = module.__info__(:compile)[:source]
+            {path, routes}
+
+          _ ->
+            raise "no routes"
+        end
+      end
+
+    :persistent_term.put(PhoenixNow, routes)
     basename = Path.basename(path)
 
     Application.put_env(:phoenix_live_reload, :dirs, [
@@ -34,6 +49,7 @@ defmodule PhoenixNow do
       live_view: [signing_salt: "aaaaaaaa"],
       secret_key_base: String.duplicate("a", 64),
       pubsub_server: PhoenixNow.PubSub,
+      debug_errors: true,
       live_reload: [
         debounce: 100,
         patterns: [
@@ -45,39 +61,58 @@ defmodule PhoenixNow do
       ]
     )
 
-    :persistent_term.put(PhoenixNow, options)
-
     defmodule Router do
-      options = :persistent_term.get(PhoenixNow)
-
       use Phoenix.Router
       import Phoenix.LiveView.Router
 
       pipeline :browser do
-        plug(:accepts, ["html"])
-        plug(:put_root_layout, html: {PhoenixNow.LayoutView, :root})
+        plug :accepts, ["html"]
+        plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
+        # TODO
+        # plug :protect_from_forgery
+        plug :put_secure_browser_headers
       end
 
       scope "/" do
         pipe_through(:browser)
 
-        live_session :default, layout: {PhoenixNow.LayoutView, :live} do
-          live("/", Keyword.get(options, :view), :index, as: :home)
+        routes = :persistent_term.get(PhoenixNow)
+
+        {lives, actions} = Enum.split_with(routes, &(elem(&1, 0) == :live))
+
+        live_session :default, layout: {PhoenixNow.Layouts, :live} do
+          for live <- lives do
+            {:live, path, live, action} = live
+            live(path, live, action)
+          end
+        end
+
+        for action <- actions do
+          {:get, path, controller, action} = action
+          get(path, controller, action)
         end
       end
     end
 
     defmodule Endpoint do
       use Phoenix.Endpoint, otp_app: :phoenix_now
-      socket("/live", Phoenix.LiveView.Socket)
-      socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
-      plug(Phoenix.LiveReloader)
-      plug(Router)
+
+      socket "/live", Phoenix.LiveView.Socket
+      socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
+
+      plug Phoenix.LiveReloader
+
+      plug Plug.Parsers,
+        parsers: [:urlencoded, :multipart, :json],
+        pass: ["*/*"],
+        json_decoder: Phoenix.json_library()
+
+      plug Router
     end
 
     children = [
       {Phoenix.PubSub, name: PhoenixNow.PubSub},
-      {PhoenixNow.Reloader, view},
+      PhoenixNow.Reloader,
       Endpoint
     ]
 
@@ -88,36 +123,32 @@ end
 defmodule PhoenixNow.Reloader do
   use GenServer
 
-  def start_link(module) do
-    GenServer.start_link(__MODULE__, module)
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, nil)
   end
 
   @impl true
-  def init(module) do
+  def init(_) do
     :ok = Phoenix.PubSub.subscribe(PhoenixNow.PubSub, "phoenix_now")
-    {:ok, %{module: module}}
+    {:ok, nil}
   end
 
   @impl true
   def handle_info({:phoenix_live_reload, "phoenix_now", path}, state) do
-    recompile(state.module, path)
+    recompile(path)
     {:noreply, state}
   end
 
-  defp recompile(module, path) do
+  defp recompile(path) do
     {:ok, quoted} =
       path
       |> File.read!()
       |> Code.string_to_quoted()
 
     Macro.prewalk(quoted, fn
-      {:defmodule, _, [{:__aliases__, _, parts} | _]} = ast ->
-        if Module.concat(parts) == module do
-          Code.eval_quoted(ast, [], file: path)
-          :ok
-        else
-          ast
-        end
+      {:defmodule, _, _} = ast ->
+        Code.eval_quoted(ast, [], file: path)
+        :ok
 
       ast ->
         ast
@@ -125,7 +156,7 @@ defmodule PhoenixNow.Reloader do
   end
 end
 
-defmodule PhoenixNow.LayoutView do
+defmodule PhoenixNow.Layouts do
   use Phoenix.Component
 
   def render("root.html", assigns) do
