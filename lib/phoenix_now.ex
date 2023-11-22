@@ -11,27 +11,27 @@ defmodule PhoenixNow do
     options =
       Keyword.validate!(options, [
         :live,
-        :routes,
+        :controller,
         port: 4000,
         open_browser: true
       ])
 
-    {path, routes} =
-      if live = options[:live] do
-        path = live.__info__(:compile)[:source]
-        {path, [{:live, "/", live, :index}]}
-      else
-        case options[:routes] do
-          [{_kind, _route, module, _action} | _] = routes ->
-            path = module.__info__(:compile)[:source]
-            {path, routes}
+    {type, module} =
+      cond do
+        live = options[:live] ->
+          {:live, live}
 
-          _ ->
-            raise "no routes"
-        end
+        controller = options[:controller] ->
+          {:controller, controller}
+
+        true ->
+          raise "missing :live or :controller"
       end
 
-    :persistent_term.put(PhoenixNow, routes)
+    router = Module.concat(module, Router)
+    endpoint = Module.concat(module, Endpoint)
+    Process.put(:phoenix_now, %{type: type, module: module, router: router, endpoint: endpoint})
+    path = module.__info__(:compile)[:source]
     basename = Path.basename(path)
 
     Application.put_env(:phoenix_live_reload, :dirs, [
@@ -42,7 +42,7 @@ defmodule PhoenixNow do
       Application.put_env(:phoenix, :browser_open, true)
     end
 
-    Application.put_env(:phoenix_now, PhoenixNow.Endpoint,
+    Application.put_env(:phoenix_now, endpoint,
       adapter: Bandit.PhoenixAdapter,
       http: [ip: {127, 0, 0, 1}, port: options[:port]],
       server: true,
@@ -61,7 +61,9 @@ defmodule PhoenixNow do
       ]
     )
 
-    defmodule Router do
+    defmodule router do
+      config = Process.get(:phoenix_now)
+
       use Phoenix.Router
       import Phoenix.LiveView.Router
 
@@ -76,25 +78,21 @@ defmodule PhoenixNow do
       scope "/" do
         pipe_through(:browser)
 
-        routes = :persistent_term.get(PhoenixNow)
+        case config.type do
+          :live ->
+            live_session :default, layout: {PhoenixNow.Layouts, :live} do
+              live "/", module, :index
+            end
 
-        {lives, actions} = Enum.split_with(routes, &(elem(&1, 0) == :live))
-
-        live_session :default, layout: {PhoenixNow.Layouts, :live} do
-          for live <- lives do
-            {:live, path, live, action} = live
-            live(path, live, action)
-          end
-        end
-
-        for action <- actions do
-          {:get, path, controller, action} = action
-          get(path, controller, action)
+          :controller ->
+            get "/", module, :index
         end
       end
     end
 
-    defmodule Endpoint do
+    defmodule endpoint do
+      router = Process.get(:phoenix_now).router
+
       use Phoenix.Endpoint, otp_app: :phoenix_now
 
       socket "/live", Phoenix.LiveView.Socket
@@ -107,13 +105,13 @@ defmodule PhoenixNow do
         pass: ["*/*"],
         json_decoder: Phoenix.json_library()
 
-      plug Router
+      plug router
     end
 
     children = [
       {Phoenix.PubSub, name: PhoenixNow.PubSub},
       PhoenixNow.Reloader,
-      Endpoint
+      endpoint
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
