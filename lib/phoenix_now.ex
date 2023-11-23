@@ -144,7 +144,15 @@ defmodule PhoenixNow.Reloader do
       |> Code.string_to_quoted()
 
     Macro.prewalk(quoted, fn
-      {:defmodule, _, _} = ast ->
+      {:defmodule, _, [mod, _]} = ast ->
+        mod =
+          case mod do
+            {:__aliases__, _, parts} -> Module.concat(parts)
+            mod when is_atom(mod) -> mod
+          end
+
+        :code.purge(mod)
+        :code.delete(mod)
         Code.eval_quoted(ast, [], file: path)
         :ok
 
