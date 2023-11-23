@@ -20,11 +20,11 @@ defmodule HomeLive do
   end
 
   def handle_event("inc", _params, socket) do
-    {:noreply, assign(socket, :count, socket.assigns.count + 1)}
+    {:noreply, assign(socket, count: socket.assigns.count + 1)}
   end
 
   def handle_event("dec", _params, socket) do
-    {:noreply, assign(socket, :count, socket.assigns.count - 1)}
+    {:noreply, assign(socket, count: socket.assigns.count - 1)}
   end
 end
 
