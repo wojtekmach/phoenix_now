@@ -1,3 +1,4 @@
+#!/usr/bin/env elixir
 Mix.install([
   {:phoenix_now, github: "wojtekmach/phoenix_now"}
 ])
@@ -11,11 +12,13 @@ defmodule HomeLive do
 
   def render(assigns) do
     ~H"""
-    <%= @count %>
-    <button phx-click="inc">+</button>
-    <button phx-click="dec">-</button>
+    <div style="padding: 1em;">
+      <span style="font-family: monospace;"><%= @count %></span>
+      <button phx-click="inc">+</button>
+      <button phx-click="dec">-</button>
 
-    <p>Now edit <code><%= __ENV__.file %></code> in your editor...</p>
+      <p style="margin-top: 1em;">Now edit <code><%= __ENV__.file %></code> in your editor...</p>
+    </div>
     """
   end
 

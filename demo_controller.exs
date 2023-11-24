@@ -1,3 +1,5 @@
+#!/usr/bin/env elixir
+
 Mix.install([
   {:phoenix_now, github: "wojtekmach/phoenix_now"}
 ])
@@ -20,11 +22,13 @@ defmodule HomeController do
 
   def index(assigns) do
     ~H"""
-    <%= @count %>
-    <button onclick={"window.location.href='/?count=#{@count + 1}'"}>+</button>
-    <button onclick={"window.location.href='/?count=#{@count - 1}'"}>-</button>
+    <div style="padding: 1em;">
+      <span style="font-family: monospace;"><%= @count %></span>
+      <button onclick={"window.location.href='/?count=#{@count + 1}'"}>+</button>
+      <button onclick={"window.location.href='/?count=#{@count - 1}'"}>-</button>
 
-    <p>Now edit <code><%= __ENV__.file %></code> in your editor...</p>
+      <p>Now edit <code><%= __ENV__.file %></code> in your editor...</p>
+    </div>
     """
   end
 end
