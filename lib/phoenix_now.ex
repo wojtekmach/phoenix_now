@@ -28,9 +28,26 @@ defmodule PhoenixNow do
           raise "missing :live or :controller"
       end
 
+    endpoint = __defendpoint__(type, module, options)
+
+    if options[:open_browser] do
+      Application.put_env(:phoenix, :browser_open, true)
+    end
+
+    children = [
+      {Phoenix.PubSub, name: PhoenixNow.PubSub},
+      PhoenixNow.Reloader,
+      endpoint
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+
+  def __defendpoint__(type, module, options) do
     router = Module.concat(module, Router)
     endpoint = Module.concat(module, Endpoint)
     Process.put(:phoenix_now, %{type: type, module: module, router: router, endpoint: endpoint})
+
     path = module.__info__(:compile)[:source]
     basename = Path.basename(path)
 
@@ -38,14 +55,10 @@ defmodule PhoenixNow do
       Path.dirname(path)
     ])
 
-    if options[:open_browser] do
-      Application.put_env(:phoenix, :browser_open, true)
-    end
-
     Application.put_env(:phoenix_now, endpoint,
       adapter: Bandit.PhoenixAdapter,
       http: [ip: {127, 0, 0, 1}, port: options[:port]],
-      server: true,
+      server: !!options[:port],
       live_view: [signing_salt: "aaaaaaaa"],
       secret_key_base: String.duplicate("a", 64),
       pubsub_server: PhoenixNow.PubSub,
@@ -61,64 +74,88 @@ defmodule PhoenixNow do
       ]
     )
 
-    defmodule router do
-      config = Process.get(:phoenix_now)
+    unless Code.ensure_loaded?(router) do
+      defmodule router do
+        config = Process.get(:phoenix_now)
 
-      use Phoenix.Router
-      import Phoenix.LiveView.Router
+        use Phoenix.Router
+        import Phoenix.LiveView.Router
 
-      pipeline :browser do
-        plug :accepts, ["html"]
-        plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
-        # TODO
-        # plug :protect_from_forgery
-        plug :put_secure_browser_headers
-      end
+        pipeline :browser do
+          plug :accepts, ["html"]
+          plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
+          # TODO
+          # plug :protect_from_forgery
+          plug :put_secure_browser_headers
+        end
 
-      scope "/" do
-        pipe_through(:browser)
+        scope "/" do
+          pipe_through(:browser)
 
-        case config.type do
-          :live ->
-            live_session :default, layout: {PhoenixNow.Layouts, :live} do
-              live "/", module, :index
-            end
+          case config.type do
+            :live ->
+              live_session :default, layout: {PhoenixNow.Layouts, :live} do
+                live "/", module, :index
+              end
 
-          :controller ->
-            get "/", module, :index
+            :controller ->
+              get "/", module, :index
+          end
         end
       end
     end
 
-    defmodule endpoint do
-      router = Process.get(:phoenix_now).router
+    unless Code.ensure_loaded?(endpoint) do
+      defmodule endpoint do
+        router = Process.get(:phoenix_now).router
 
-      use Phoenix.Endpoint, otp_app: :phoenix_now
+        use Phoenix.Endpoint, otp_app: :phoenix_now
 
-      socket "/live", Phoenix.LiveView.Socket
-      socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
+        socket "/live", Phoenix.LiveView.Socket
+        socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
 
-      plug Phoenix.LiveReloader
+        plug Phoenix.LiveReloader
 
-      plug Plug.Parsers,
-        parsers: [:urlencoded, :multipart, :json],
-        pass: ["*/*"],
-        json_decoder: Phoenix.json_library()
+        plug Plug.Parsers,
+          parsers: [:urlencoded, :multipart, :json],
+          pass: ["*/*"],
+          json_decoder: Phoenix.json_library()
 
-      plug router
+        plug router
+      end
     end
 
-    children = [
-      {Phoenix.PubSub, name: PhoenixNow.PubSub},
-      PhoenixNow.Reloader,
-      endpoint
-    ]
+    endpoint
+  end
+end
 
-    Supervisor.start_link(children, strategy: :one_for_one)
+defmodule PhoenixNow.Case do
+  use ExUnit.CaseTemplate
+
+  using do
+    quote do
+      import Plug.Conn
+      import Phoenix.ConnTest
+      import Phoenix.LiveViewTest
+      import PhoenixNow.Case
+
+      view =
+        Module.get_attribute(__MODULE__, :view) ||
+          raise("no @view set in test case before `use PhoenixNow.Case`")
+
+      @endpoint PhoenixNow.__defendpoint__(:live, view, [])
+
+      setup _tags do
+        {:ok, _} = @endpoint.start_link([])
+        conn = Phoenix.ConnTest.build_conn()
+        %{conn: conn}
+      end
+    end
   end
 end
 
 defmodule PhoenixNow.Reloader do
+  @moduledoc false
   use GenServer
 
   def start_link(_) do
@@ -163,6 +200,7 @@ defmodule PhoenixNow.Reloader do
 end
 
 defmodule PhoenixNow.Layouts do
+  @moduledoc false
   use Phoenix.Component
 
   def render("root.html", assigns) do
@@ -201,5 +239,6 @@ defmodule PhoenixNow.Layouts do
 end
 
 defmodule PhoenixNow.ErrorView do
+  @moduledoc false
   def render(template, _), do: Phoenix.Controller.status_message_from_template(template)
 end

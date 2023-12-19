@@ -1,3 +1,8 @@
+#!/usr/bin/env elixir
+Mix.install([
+  {:phoenix_now, github: "wojtekmach/phoenix_now"}
+])
+
 defmodule HomeLive do
   use Phoenix.LiveView
 
@@ -8,7 +13,7 @@ defmodule HomeLive do
   def render(assigns) do
     ~H"""
     <div style="padding: 1em;">
-      <span id="count" style="font-family: monospace;">Count: <%= @count %></span>
+      <span style="font-family: monospace;">Count: <%= @count %></span>
       <button phx-click="inc">+</button>
       <button phx-click="dec">-</button>
 
@@ -27,6 +32,7 @@ defmodule HomeLive do
 end
 
 Logger.configure(level: :warning)
+ExUnit.start()
 
 defmodule HomeLiveTest do
   @view HomeLive

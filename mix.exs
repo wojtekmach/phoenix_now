@@ -23,6 +23,7 @@ defmodule PhoenixNow.MixProject do
       {:phoenix, "~> 1.0"},
       {:phoenix_live_view, "~> 0.20"},
       {:bandit, "~> 1.0", override: true},
+      {:floki, "~> 0.35"},
 
       # for some reason this needs to be runtime false
       {:phoenix_live_reload, "~> 1.0", runtime: false},
