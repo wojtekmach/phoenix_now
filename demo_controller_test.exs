@@ -3,7 +3,7 @@ Mix.install([
   {:phoenix_now, github: "wojtekmach/phoenix_now"}
 ])
 
-defmodule HomeController do
+defmodule DemoController do
   use Phoenix.Controller, formats: [:html]
   use Phoenix.Component
   plug :put_layout, false
@@ -22,7 +22,7 @@ defmodule HomeController do
   def index(assigns) do
     ~H"""
     <div style="padding: 1em;">
-      <span style="font-family: monospace;"><%= @count %></span>
+      <span style="font-family: monospace;">Count: <%= @count %></span>
       <button onclick={"window.location.href='/?count=#{@count + 1}'"}>+</button>
       <button onclick={"window.location.href='/?count=#{@count - 1}'"}>-</button>
 
@@ -32,5 +32,18 @@ defmodule HomeController do
   end
 end
 
-{:ok, _} = PhoenixNow.start_link(controller: HomeController)
-Process.sleep(:infinity)
+Logger.configure(level: :info)
+ExUnit.start()
+
+defmodule DemoControllerTest do
+  use ExUnit.Case, async: true
+  use PhoenixNow.Test, controller: DemoController
+
+  test "it works" do
+    conn = get(build_conn(), "/")
+    assert html_response(conn, 200) =~ "Count: 0"
+
+    conn = get(build_conn(), "/?count=1")
+    assert html_response(conn, 200) =~ "Count: 1"
+  end
+end

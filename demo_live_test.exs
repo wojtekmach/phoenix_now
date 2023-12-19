@@ -3,7 +3,7 @@ Mix.install([
   {:phoenix_now, github: "wojtekmach/phoenix_now"}
 ])
 
-defmodule HomeLive do
+defmodule DemoLive do
   use Phoenix.LiveView
 
   def mount(_params, _session, socket) do
@@ -23,23 +23,23 @@ defmodule HomeLive do
   end
 
   def handle_event("inc", _params, socket) do
-    {:noreply, assign(socket, count: socket.assigns.count + 1)}
+    {:noreply, update(socket, :count, &(&1 + 1))}
   end
 
   def handle_event("dec", _params, socket) do
-    {:noreply, assign(socket, count: socket.assigns.count - 1)}
+    {:noreply, update(socket, :count, &(&1 - 1))}
   end
 end
 
-Logger.configure(level: :warning)
+Logger.configure(level: :info)
 ExUnit.start()
 
-defmodule HomeLiveTest do
-  @view HomeLive
-  use PhoenixNow.Case, async: true
+defmodule DemoLiveTest do
+  use ExUnit.Case, async: true
+  use PhoenixNow.Test, live: DemoLive
 
-  test "it works", %{conn: conn} do
-    {:ok, view, html} = live(conn, "/")
+  test "it works" do
+    {:ok, view, html} = live(build_conn(), "/")
 
     assert html =~ "Count: 0"
     assert render_click(view, :inc, %{}) =~ "Count: 1"

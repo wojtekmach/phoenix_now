@@ -129,26 +129,28 @@ defmodule PhoenixNow do
   end
 end
 
-defmodule PhoenixNow.Case do
-  use ExUnit.CaseTemplate
+defmodule PhoenixNow.Test do
+  defmacro __using__([{type, module}]) do
+    module = Macro.expand(module, __ENV__)
 
-  using do
+    imports =
+      if type == :live do
+        quote do
+          import(Phoenix.LiveViewTest)
+        end
+      end
+
     quote do
-      import Plug.Conn
       import Phoenix.ConnTest
-      import Phoenix.LiveViewTest
-      import PhoenixNow.Case
+      module = unquote(module)
+      type = unquote(type)
+      unquote(imports)
 
-      view =
-        Module.get_attribute(__MODULE__, :view) ||
-          raise("no @view set in test case before `use PhoenixNow.Case`")
+      @endpoint PhoenixNow.__defendpoint__(type, module, [])
 
-      @endpoint PhoenixNow.__defendpoint__(:live, view, [])
-
-      setup _tags do
+      setup do
         {:ok, _} = @endpoint.start_link([])
-        conn = Phoenix.ConnTest.build_conn()
-        %{conn: conn}
+        :ok
       end
     end
   end

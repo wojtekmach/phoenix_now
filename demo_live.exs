@@ -3,7 +3,7 @@ Mix.install([
   {:phoenix_now, github: "wojtekmach/phoenix_now"}
 ])
 
-defmodule HomeLive do
+defmodule DemoLive do
   use Phoenix.LiveView
 
   def mount(_params, _session, socket) do
@@ -31,5 +31,5 @@ defmodule HomeLive do
   end
 end
 
-{:ok, _} = PhoenixNow.start_link(live: HomeLive)
+{:ok, _} = PhoenixNow.start_link(live: DemoLive)
 Process.sleep(:infinity)
