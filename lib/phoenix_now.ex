@@ -28,25 +28,9 @@ defmodule PhoenixNow do
           raise "missing :live or :controller"
       end
 
-    endpoint = __defendpoint__(type, module, options)
-
     if options[:open_browser] do
       Application.put_env(:phoenix, :browser_open, true)
     end
-
-    children = [
-      {Phoenix.PubSub, name: PhoenixNow.PubSub},
-      PhoenixNow.Reloader,
-      endpoint
-    ]
-
-    Supervisor.start_link(children, strategy: :one_for_one)
-  end
-
-  def __defendpoint__(type, module, options) do
-    router = Module.concat(module, Router)
-    endpoint = Module.concat(module, Endpoint)
-    Process.put(:phoenix_now, %{type: type, module: module, router: router, endpoint: endpoint})
 
     path = module.__info__(:compile)[:source]
     basename = Path.basename(path)
@@ -55,77 +39,199 @@ defmodule PhoenixNow do
       Path.dirname(path)
     ])
 
-    Application.put_env(:phoenix_now, endpoint,
-      adapter: Bandit.PhoenixAdapter,
-      http: [ip: {127, 0, 0, 1}, port: options[:port]],
-      server: !!options[:port],
-      live_view: [signing_salt: "aaaaaaaa"],
-      secret_key_base: String.duplicate("a", 64),
-      pubsub_server: PhoenixNow.PubSub,
-      debug_errors: true,
-      live_reload: [
-        debounce: 100,
-        patterns: [
-          ~r/#{basename}$/
-        ],
-        notify: [
-          {"phoenix_now", [~r/#{basename}$/]}
+    options =
+      [
+        type: type,
+        module: module,
+        basename: basename
+      ] ++ Keyword.take(options, [:port])
+
+    children = [
+      {Phoenix.PubSub, name: PhoenixNow.PubSub},
+      PhoenixNow.Reloader,
+      {PhoenixNow.Endpoint, options}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+
+defmodule PhoenixNow.DelegateController do
+  @moduledoc false
+
+  def init(options) do
+    options
+  end
+
+  def call(conn, options) do
+    %{type: :controller, module: controller} = conn.private.phoenix_now
+    controller.call(conn, controller.init(options))
+  end
+end
+
+defmodule PhoenixNow.DelegateLive do
+  @moduledoc false
+  use Phoenix.LiveView
+
+  @impl true
+  def mount(params, session, socket) do
+    live().mount(params, session, socket)
+  end
+
+  @impl true
+  def render(assigns) do
+    live().render(assigns)
+  end
+
+  @impl true
+  def handle_event(event, params, socket) do
+    live().handle_event(event, params, socket)
+  end
+
+  @impl true
+  def handle_info(message, socket) do
+    live().handle_info(message, socket)
+  end
+
+  defp live do
+    %{type: :live, module: live} = PhoenixNow.Endpoint.config(:phoenix_now)
+    live
+  end
+end
+
+defmodule PhoenixNow.Endpoint do
+  @moduledoc false
+
+  use Phoenix.Endpoint, otp_app: :phoenix_now
+
+  defoverridable start_link: 1
+
+  def start_link(options) do
+    options =
+      Keyword.validate!(
+        options,
+        [
+          :type,
+          :module,
+          :port,
+          :basename,
+          :router
         ]
-      ]
+      )
+
+    router =
+      case options[:type] do
+        :controller -> PhoenixNow.ControllerRouter
+        :live -> PhoenixNow.LiveRouter
+      end
+
+    options = Keyword.put_new(options, :router, router)
+
+    live_reload_options =
+      if basename = options[:basename] do
+        [
+          live_reload: [
+            debounce: 100,
+            patterns: [
+              ~r/#{basename}$/
+            ],
+            notify: [
+              {"phoenix_now", [~r/#{basename}$/]}
+            ]
+          ]
+        ]
+      else
+        []
+      end
+
+    Application.put_env(
+      :phoenix_now,
+      __MODULE__,
+      [
+        adapter: Bandit.PhoenixAdapter,
+        http: [ip: {127, 0, 0, 1}, port: options[:port]],
+        server: !!options[:port],
+        live_view: [signing_salt: "aaaaaaaa"],
+        secret_key_base: String.duplicate("a", 64),
+        pubsub_server: PhoenixNow.PubSub,
+        debug_errors: true,
+        phoenix_now: Map.new(options)
+      ] ++ live_reload_options
     )
 
-    unless Code.ensure_loaded?(router) do
-      defmodule router do
-        config = Process.get(:phoenix_now)
+    super([])
+  end
 
-        use Phoenix.Router
-        import Phoenix.LiveView.Router
+  @session_options [
+    store: :cookie,
+    key: "_phoenix_now_key",
+    signing_salt: "ll+Leuc3",
+    same_site: "Lax",
+    # 14 days
+    max_age: 14 * 24 * 60 * 60
+  ]
 
-        pipeline :browser do
-          plug :accepts, ["html"]
-          plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
-          # TODO
-          # plug :protect_from_forgery
-          plug :put_secure_browser_headers
-        end
+  socket "/live", Phoenix.LiveView.Socket
+  socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
 
-        scope "/" do
-          pipe_through(:browser)
+  plug Phoenix.LiveReloader
 
-          case config.type do
-            :live ->
-              live_session :default, layout: {PhoenixNow.Layouts, :live} do
-                live "/", module, :index
-              end
+  plug Plug.Parsers,
+    parsers: [:urlencoded, :multipart, :json],
+    pass: ["*/*"],
+    json_decoder: Phoenix.json_library()
 
-            :controller ->
-              get "/", module, :index
-          end
-        end
-      end
+  plug Plug.Session, @session_options
+
+  plug :router
+
+  defp router(conn, []) do
+    config = conn.private.phoenix_endpoint.config(:phoenix_now)
+    conn = Plug.Conn.put_private(conn, :phoenix_now, config)
+    config.router.call(conn, [])
+  end
+end
+
+defmodule PhoenixNow.ControllerRouter do
+  @moduledoc false
+
+  use Phoenix.Router
+  import Phoenix.LiveView.Router
+
+  pipeline :browser do
+    plug :accepts, ["html", "json"]
+    plug :fetch_session
+    plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers
+  end
+
+  scope "/" do
+    pipe_through(:browser)
+
+    get "/", PhoenixNow.DelegateController, :index
+  end
+end
+
+defmodule PhoenixNow.LiveRouter do
+  @moduledoc false
+
+  use Phoenix.Router
+  import Phoenix.LiveView.Router
+
+  pipeline :browser do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug :put_root_layout, html: {PhoenixNow.Layouts, :root}
+    plug :put_secure_browser_headers
+  end
+
+  scope "/" do
+    pipe_through(:browser)
+
+    live_session :default, layout: {PhoenixNow.Layouts, :live} do
+      live "/", PhoenixNow.DelegateLive, :index
     end
-
-    unless Code.ensure_loaded?(endpoint) do
-      defmodule endpoint do
-        router = Process.get(:phoenix_now).router
-
-        use Phoenix.Endpoint, otp_app: :phoenix_now
-
-        socket "/live", Phoenix.LiveView.Socket
-        socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-
-        plug Phoenix.LiveReloader
-
-        plug Plug.Parsers,
-          parsers: [:urlencoded, :multipart, :json],
-          pass: ["*/*"],
-          json_decoder: Phoenix.json_library()
-
-        plug router
-      end
-    end
-
-    endpoint
   end
 end
 
@@ -146,10 +252,11 @@ defmodule PhoenixNow.Test do
       type = unquote(type)
       unquote(imports)
 
-      @endpoint PhoenixNow.__defendpoint__(type, module, [])
+      @endpoint PhoenixNow.Endpoint
+      @phoenix_now [type: type, module: module]
 
       setup do
-        {:ok, _} = @endpoint.start_link([])
+        {:ok, _} = @endpoint.start_link(@phoenix_now)
         :ok
       end
     end
@@ -158,6 +265,7 @@ end
 
 defmodule PhoenixNow.Reloader do
   @moduledoc false
+
   use GenServer
 
   def start_link(_) do
@@ -203,6 +311,7 @@ end
 
 defmodule PhoenixNow.Layouts do
   @moduledoc false
+
   use Phoenix.Component
 
   def render("root.html", assigns) do
@@ -242,5 +351,6 @@ end
 
 defmodule PhoenixNow.ErrorView do
   @moduledoc false
+
   def render(template, _), do: Phoenix.Controller.status_message_from_template(template)
 end
